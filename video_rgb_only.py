@@ -5,17 +5,17 @@ import time
 
 class Video_RGB(object):
     def __init__(self):
-        self.dirname = ""
+        self.dataPath = ""
         self.cap = None
         t0 = 0
 
     def start(self):
-        print("Start video" + self.dirname)
-        if self.dirname == "":
+        print("Start video" + self.dataPath)
+        if self.dataPath == "":
             print("invalid folder!")
             return
 
-        self.cap = cv2.VideoCapture(self.dirname)
+        self.cap = cv2.VideoCapture(self.dataPath)
         fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.frame_count = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
         self.t0 = time.time()
@@ -48,4 +48,4 @@ class Video_RGB(object):
             col = (0, 256, 256)
             cv2.putText(frame, "(Error: Can not load the video)",
                         (65, 220), cv2.FONT_HERSHEY_PLAIN, 2, col)
-        return frame
+        return frame, None

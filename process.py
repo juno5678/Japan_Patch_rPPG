@@ -8,7 +8,54 @@ from scipy import signal
 from scipy.sparse import spdiags
 from sklearn.decomposition import FastICA
 import matplotlib.pyplot as plt
+"""
+def get_patches_signal(K, frame1, frame1_key_landmark, frame2 = None, frame2_key_landmark = None):
+    if frame2 is not None:
+        # get patches mean
+        patches_weights = [None]*2
+        patches_rect = [None]*2
+        patches_mean = [None]*K
+        for k in range(K):
+            for i in range(2):
+                patches_weights[i] = ps.get_patch_weights()
+                patches_rect[i] = ps.get_patch(g_patches_weights[i][k], g_key_landmark)
+            g_patches_mean[k] = ps.cal_mean(g_patches_rect[0], g_patches_rect[1], g_frame)
+"""
+# get left eye, right eye and mouse's landmark
+def get_key_landmark(frame, t, fd):
+    # detect face
+    if t == 0:
+        face_rects = fd.face_detect(frame)
+    else:
+        face_rects = fd.face_track(frame)
 
+    # detect 68 landmark
+    landmark = fd.detect_landmark(frame, face_rects)
+    # get key landmark
+    return fd.get_key_landmark(landmark)
+
+
+# get the random weights for the height and width of the patches
+def get_patch_weights():
+    return [random.random(), random.random()]
+
+
+# get the upper left point & size of the patch
+def get_patch(weights, key_landmark):
+    leftEye = key_landmark[0]
+    rightEye = key_landmark[1]
+    mouse = key_landmark[2]
+    top_y = min(leftEye.y, rightEye.y)
+    bottom_y = mouse.y
+    left_x = leftEye.x
+    right_x = rightEye.x
+    width = right_x - left_x
+    height = bottom_y - top_y
+    patch_width = round(0.3*width)
+    patch_height = round(0.3*height)
+    patch_x = round(weights[0] * (0.7 * width) + left_x)
+    patch_y = round(weights[1] * (0.7 * height) + top_y)
+    return [patch_x, patch_y, patch_width, patch_height]
 
 def detrend(inputs, lamb=1000):
     filtered_signal = np.empty((2, 1))

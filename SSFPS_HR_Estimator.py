@@ -6,9 +6,10 @@ import cv2
 from sklearn.decomposition import FastICA
 import sys
 from video_realsense_file import Video
+from video_rgb_only import Video_RGB
 import process as ps
 import numpy as np
-
+import os
 
 class FPS_HRE(object):
     def __init__(self, dataPath):
@@ -32,11 +33,152 @@ class FPS_HRE(object):
         self.vote_box_pair_NIR = np.zeros(199)  # 42 bpm ~ 240 bpm vote box for pair NIR patches
         self.vote_box_G_NIR = np.zeros(199)  # 42 bpm ~ 240 bpm vote box for G & NIR patches
         self.final_vote_box = np.zeros(199)  # 42 bpm ~ 240 bpm vote box for final bpm
+        self.mode = 0  # 0 : rgb, 1 : rgb+NIR
+        self.mode_init = False
 
     def run(self):
-        data_input = self.input_rs_video
-        data_input.dataPath = self.dataPath
-        data_input.start()
+
+        # check file is exist
+        if os.path.isfile(self.dataPath):
+            print('file exist')
+
+            # check file extension
+            root, extension = os.path.splitext(self.dataPath)
+            if extension == '.avi':
+                data_input = Video_RGB()
+            elif extension == '.bag':
+                data_input = Video()
+            else:
+                print('wrong file extension . Need input .avi or .bag file. ')
+                return -1
+
+            # set input data
+            data_input.dataPath = self.dataPath
+            data_input.start()
+        else:
+            print('file not exist')
+            return -1
+
+        # collect data
+        for t in range(self.buffer_size):
+
+            rgb_frame, nir_frame = data_input.get_frame()
+            g_frame = rgb_frame[:, :, 1]
+
+            # only RGB mode
+            if self.mode == 0:
+                # initial mode
+                if not self.mode_init:
+                    # set patches weights
+                    pair_g_patches_weights = [[0]*2 for i in range(self.K)]
+                    for k in range(self.K):
+                        for i in range(2):
+                            pair_g_patches_weights[k][i] = ps.get_patch_weights()
+                    g_fd = FaceDetection()
+                    self.mode_init = True
+
+                # get key landmark
+                g_key_landmark = ps.get_key_landmark(g_frame, t, g_fd)
+
+                # get patches mean
+                pair_g_patches_rect = [None]*2
+                pair_g_patches_mean = [[None]*self.buffer_size for i in range(self.K)]
+                for k in range(self.K):
+                    for i in range(2):
+                        pair_g_patches_rect[i] = ps.get_patch(pair_g_patches_weights[k][i], g_key_landmark)
+                    pair_g_patches_mean[k][t] = ps.cal_mean(pair_g_patches_rect[0], pair_g_patches_rect[1], g_frame)
+
+            # RGB + NIR mode
+            elif self.mode == 1:
+                # check NIR information
+                if nir_frame is None:
+                    print('Not found NIR frame!')
+                    return -1
+
+                # initial mode
+                if not self.mode_init:
+                    # set patches weights
+                    pair_g_patches_weights = [[0]*2 for i in range(self.K)]
+                    pair_nir_patches_weights = [[0]*2 for i in range(self.K)]
+                    g_nir_patches_weights = [0] * self.K
+                    for k in range(self.K):
+                        for i in range(2):
+                            pair_g_patches_weights[k][i] = ps.get_patch_weights()
+                            pair_nir_patches_weights[k][i] = ps.get_patch_weights()
+                        g_nir_patches_weights[k] = ps.get_patch_weights()
+                    g_fd = FaceDetection()
+                    nir_fd = FaceDetection()
+                    self.mode_init = True
+
+                # get key landmark
+                g_key_landmark = ps.get_key_landmark(g_frame, t, g_fd)
+                nir_key_landmark = ps.get_key_landmark(nir_frame, t, nir_fd)
+
+                # get pair g patches mean
+                pair_g_patches_rect = [None]*2
+                pair_g_patches_mean = [[None]*self.buffer_size for i in range(self.K)]
+                for k in range(self.K):
+                    for i in range(2):
+                        pair_g_patches_rect[i] = ps.get_patch(pair_g_patches_weights[i][k], g_key_landmark)
+                    pair_g_patches_mean[k][t] = ps.cal_mean(pair_g_patches_rect[0], pair_g_patches_rect[1], g_frame)
+
+                # get pair nir patches mean
+                pair_nir_patches_rect = [None]*2
+                pair_nir_patches_mean = [[None]*self.buffer_size for i in range(self.K)]
+                for k in range(self.K):
+                    for i in range(2):
+                        pair_nir_patches_rect[i] = ps.get_patch(pair_nir_patches_weights[i][k], nir_key_landmark)
+                    pair_nir_patches_mean[k][t] = ps.cal_mean(pair_nir_patches_rect[0], pair_nir_patches_rect[1], g_frame)
+
+                # get g and nir patches mean
+                g_nir_patches_rect = [None]*2
+                g_nir_patches_mean = [[None]*self.buffer_size for i in range(self.K)]
+                for k in range(self.K):
+                    g_nir_patches_rect[0] = ps.get_patch(g_nir_patches_weights[i][k], g_key_landmark)
+                    g_nir_patches_rect[1] = ps.get_patch(g_nir_patches_weights[i][k], nir_key_landmark)
+                    g_nir_patches_mean[k][t] = ps.cal_mean(g_nir_patches_rect[0], g_nir_patches_rect[1], g_frame, nir_frame)
+
+        # estimate heart rate
+        if self.mode == 0:
+            for k in range(self.K):
+                # signal process and estimate heart rate
+                pair_g_bpm = self.signal_process(pair_g_patches_mean[k])
+                if pair_g_bpm is not None:
+                    self.vote_box_pair_G[pair_g_bpm - 42] += 1
+            final_bpm = self.find_final_bpm(self.vote_box_pair_G)
+            print(final_bpm)
+        elif self.mode == 1:
+            for k in range(self.K):
+                # signal process and estimate heart rate
+                pair_g_bpm = self.signal_process(pair_g_patches_mean[k])
+                pair_nir_bpm = self.signal_process(pair_nir_patches_mean[k])
+                g_nir_bpm = self.signal_process(g_nir_patches_mean[k])
+                if pair_g_bpm is not None:
+                    self.vote_box_pair_G[pair_g_bpm - 42] += 1
+                    self.vote_box_pair_NIR[pair_nir_bpm - 42] += 1
+                    self.vote_box_G_NIR[g_nir_bpm - 42] += 1
+
+            self.final_vote_box = self.combine_vote_box(self.vote_box_pair_g, self.vote_box_pair_nir, self.vote_box_g_nir)
+            final_bpm = self.find_final_bpm(self.final_vote_box)
+            print(final_bpm)
+
+
+
+
+
+            #cv2.imshow("rgb", rgb_frame)
+            #if nir_frame is not None:
+            #    cv2.imshow("nir", nir_frame)
+            #if cv2.waitKey(1) == 27:
+            #    break
+        #rgb_face, rgb_face_rect = self.fd.face_detect_rgb(rgb_frame)
+        #g_face = rgb_face[:, :, 0]
+
+        """
+
+
+
+
 
         # store face ROI
         for i in range(self.buffer_size):
@@ -74,11 +216,12 @@ class FPS_HRE(object):
                     g_nir_patch_mean = ps.cal_mean(g_patch_rect, nir_patch_rect, self.g_face_buffer[i],
                                                    self.nir_face_buffer[i])
                     bpm_g_nir = self.signal_process(g_nir_patch_mean)
-                    if bpm_g_nir is not None:
-                        self.vote_box_G_NIR[bpm_g_nir - 42] += 1
-        self.final_vote_box = self.combine_vote_box(self.vote_box_pair_G, self.vote_box_pair_NIR, self.vote_box_G_NIR)
+                    if bpm_g_nir is not none:
+                        self.vote_box_g_nir[bpm_g_nir - 42] += 1
+        self.final_vote_box = self.combine_vote_box(self.vote_box_pair_g, self.vote_box_pair_nir, self.vote_box_g_nir)
         final_bpm = self.find_final_bpm(self.final_vote_box)
         print(final_bpm)
+        """
 
     def find_final_bpm(self, final_vote_box):
         x = np.arange(42, 240, 1)

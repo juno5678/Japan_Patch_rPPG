@@ -1,5 +1,7 @@
 *.bz2
 *.swp
+*.dat
+*.idea
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
