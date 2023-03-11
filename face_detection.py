@@ -57,6 +57,6 @@ class FaceDetection(object):
 
     # get left eye, right eye and mouse's landmark
     def get_key_landmark(self, shape):
-        return [shape.part(36), shape.part(45), shape.part(57)]
+        return [shape.part(17), shape.part(26), shape.part(57)]
 
 
